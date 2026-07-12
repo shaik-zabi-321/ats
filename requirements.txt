@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+PyMuPDF
+sentence-transformers
+scikit-learn
+torch
+transformers
+accelerate
+sentencepiece
