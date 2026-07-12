@@ -1,16 +1,22 @@
 """
-ATS Resume Analyzer - Backend API
-----------------------------------
+ATS Resume Analyzer - Backend API (lightweight / free-tier friendly)
+----------------------------------------------------------------------
 Single endpoint: POST /analyze  (upload a PDF resume, get JSON back)
 
-Pipeline (ported straight from the notebook):
+Pipeline:
   1. Extract text from the uploaded PDF (PyMuPDF)
   2. Clean the text
-  3. Embed resume + a fixed set of role descriptions (SentenceTransformer bge-base-en-v1.5)
+  3. TF-IDF vectorize resume + a fixed set of role descriptions
   4. Cosine-similarity resume -> each role = semantic score
-  5. Keyword/alias-based skill extraction -> skill score per role
+  5. Keyword/alias-based skill extraction (word-boundary matched) -> skill score per role
   6. Weighted ATS score (0.6 * semantic + 0.4 * skill) per role, sorted best-first
-  7. (optional) LLM-generated written feedback for the top role (Phi-3.5-mini-instruct)
+  7. (optional) Rule-based written feedback for the top role - no LLM, so it
+     runs comfortably within free-tier hosting memory limits (e.g. Render free plan).
+
+This version intentionally avoids torch / sentence-transformers / transformers.
+Those pull in a GB+ of dependencies and need 1GB+ RAM to load, which reliably
+gets OOM-killed on free hosting tiers (~512MB). TF-IDF + scikit-learn gets you
+the same "does this resume look like this role" comparison in a few MB.
 
 Run:
   pip install -r requirements.txt
@@ -19,14 +25,13 @@ Run:
 Then POST a PDF to:  http://localhost:8000/analyze
 """
 
-import io
 import re
 from contextlib import asynccontextmanager
 
 import fitz  # PyMuPDF
 from fastapi import FastAPI, File, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # ----------------------------------------------------------------------
@@ -116,14 +121,15 @@ SKILL_ALIASES = {
 }
 
 # ----------------------------------------------------------------------
-# Model container - loaded once at startup, reused across requests
+# Model container - built once at startup, reused across requests.
+# No heavyweight ML runtime here: just a TF-IDF vectorizer fit on the
+# role descriptions, which is a few KB and loads instantly.
 # ----------------------------------------------------------------------
 
 
 class Models:
-    embedder: SentenceTransformer | None = None
-    role_embeddings: list | None = None
-    feedback_pipeline = None  # loaded lazily, only if feedback is requested
+    vectorizer: TfidfVectorizer | None = None
+    role_vectors = None  # sparse matrix, one row per role
 
 
 models = Models()
@@ -131,15 +137,10 @@ models = Models()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Loading sentence embedding model (BAAI/bge-base-en-v1.5)...")
-    models.embedder = SentenceTransformer("BAAI/bge-base-en-v1.5")
-
-    print("Pre-computing role description embeddings...")
-    models.role_embeddings = [
-        {"role": r["role"], "embedding": models.embedder.encode(
-            r["description"])}
-        for r in ROLE_DEFINITIONS
-    ]
+    print("Fitting TF-IDF vectorizer on role descriptions...")
+    descriptions = [r["description"] for r in ROLE_DEFINITIONS]
+    models.vectorizer = TfidfVectorizer(stop_words="english")
+    models.role_vectors = models.vectorizer.fit_transform(descriptions)
     print("Startup complete. Ready to accept requests.")
     yield
     print("Shutting down.")
@@ -198,56 +199,68 @@ def calculate_skill_score(user_skills, required_skills):
     return round(score, 2), list(matched), list(missing)
 
 
-def get_feedback_pipeline():
-    """Lazily load the (large) feedback LLM only on first use."""
-    if models.feedback_pipeline is None:
-        from transformers import pipeline
-        print("Loading feedback LLM (microsoft/Phi-3.5-mini-instruct)... this may take a while.")
-        models.feedback_pipeline = pipeline(
-            "text-generation",
-            model="microsoft/Phi-3.5-mini-instruct",
-            max_new_tokens=300,
-            device_map="auto",
-        )
-    return models.feedback_pipeline
-
-
 def generate_feedback(ats_result: dict) -> str:
-    prompt = f"""
-You are an expert ATS resume reviewer.
+    """
+    Rule-based written feedback - no LLM involved. Deliberately templated
+    (not invented) so it stays 100% grounded in the scores/skills we actually
+    computed, and costs ~0 extra memory/latency to generate.
+    """
+    role = ats_result["Role"]
+    score = ats_result["ATS Score"]
+    matched = ats_result["Matched Skills"]
+    missing = ats_result["Missing Skills"]
 
-Analyze this candidate result.
+    if score >= 75:
+        tier = "a strong match"
+    elif score >= 55:
+        tier = "a solid, moderate match"
+    else:
+        tier = "a partial match"
 
-Recommended Role:
-{ats_result['Role']}
+    lines = [
+        f"Overall Assessment: Your resume is {tier} for the {role} role, "
+        f"with an ATS score of {score}%.",
+        "",
+    ]
 
-ATS Score:
-{ats_result['ATS Score']}%
+    if matched:
+        lines.append(
+            "Strengths: Your resume clearly demonstrates "
+            + ", ".join(matched) +
+            ", which are directly relevant to this role."
+        )
+    else:
+        lines.append(
+            "Strengths: No directly matching keywords for this role were detected "
+            "in the resume text - consider making relevant skills more explicit."
+        )
 
-Matched Skills:
-{', '.join(ats_result['Matched Skills'])}
+    lines.append("")
 
-Missing Skills:
-{', '.join(ats_result['Missing Skills'])}
+    if missing:
+        lines.append(
+            "Missing Skill Impact: The role typically also looks for "
+            + ", ".join(missing) + ". Their absence may lower how strongly "
+            "ATS systems and recruiters match your profile to this role."
+        )
+        lines.append("")
+        lines.append(
+            "Improvement Suggestions: Consider adding concrete, truthful experience "
+            "with " + ", ".join(missing) + " to your resume - e.g. a project, "
+            "coursework, or certification that used them. Keep skill mentions specific "
+            "(tools, versions, outcomes) rather than just listing keywords."
+        )
+    else:
+        lines.append(
+            "Missing Skill Impact: No major required skills for this role appear to be missing."
+        )
+        lines.append("")
+        lines.append(
+            "Improvement Suggestions: Focus on quantifying your impact for the skills "
+            "you already have (metrics, scale, outcomes) to strengthen the resume further."
+        )
 
-Generate a professional resume review with:
-
-1. Overall assessment
-2. Candidate strengths
-3. Missing skill impact
-4. Improvement suggestions
-
-Rules:
-- Do not invent skills or experience.
-- Only use information provided.
-- Keep the response under 250 words.
-- Give actionable suggestions.
-
-Keep it concise and useful for a job seeker.
-"""
-    pipe = get_feedback_pipeline()
-    response = pipe(prompt, max_new_tokens=300, return_full_text=False)
-    return response[0]["generated_text"].strip()
+    return "\n".join(lines)
 
 
 # ----------------------------------------------------------------------
@@ -259,8 +272,7 @@ async def analyze_resume(
     file: UploadFile = File(...),
     include_feedback: bool = Query(
         False,
-        description="If true, also generate written LLM feedback for the top role "
-                    "(slower - loads Phi-3.5-mini-instruct on first call).",
+        description="If true, also include a written (rule-based) review for the top role.",
     ),
 ):
     if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
@@ -283,15 +295,15 @@ async def analyze_resume(
         raise HTTPException(
             status_code=422, detail="No extractable text found in PDF.")
 
-    # 3-4. Resume embedding + semantic similarity to each role
-    resume_embedding = models.embedder.encode(clean_resume)
+    # 3-4. TF-IDF vectorize resume + cosine similarity to each role
+    resume_vector = models.vectorizer.transform([clean_resume])
+    similarities = cosine_similarity(resume_vector, models.role_vectors)[0]
 
-    role_results = []
-    for role in models.role_embeddings:
-        similarity = cosine_similarity(
-            [resume_embedding], [role["embedding"]])[0][0]
-        role_results.append(
-            {"role": role["role"], "score": round(similarity * 100, 2)})
+    role_results = [
+        {"role": ROLE_DEFINITIONS[i]["role"], "score": round(
+            float(similarities[i]) * 100, 2)}
+        for i in range(len(ROLE_DEFINITIONS))
+    ]
 
     role_results.sort(key=lambda x: x["score"], reverse=True)
 
@@ -322,7 +334,7 @@ async def analyze_resume(
         "top_match": ats_results[0],
     }
 
-    # 7. Optional LLM-written feedback for the top match
+    # 7. Optional written feedback for the top match (rule-based, not an LLM)
     if include_feedback:
         response["feedback"] = generate_feedback(ats_results[0])
 
