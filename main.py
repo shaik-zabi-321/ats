@@ -119,6 +119,7 @@ SKILL_ALIASES = {
 # Model container - loaded once at startup, reused across requests
 # ----------------------------------------------------------------------
 
+
 class Models:
     embedder: SentenceTransformer | None = None
     role_embeddings: list | None = None
@@ -135,7 +136,8 @@ async def lifespan(app: FastAPI):
 
     print("Pre-computing role description embeddings...")
     models.role_embeddings = [
-        {"role": r["role"], "embedding": models.embedder.encode(r["description"])}
+        {"role": r["role"], "embedding": models.embedder.encode(
+            r["description"])}
         for r in ROLE_DEFINITIONS
     ]
     print("Startup complete. Ready to accept requests.")
@@ -156,6 +158,7 @@ app.add_middleware(
 # ----------------------------------------------------------------------
 # Helpers (ported from the notebook)
 # ----------------------------------------------------------------------
+
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     text = ""
@@ -178,8 +181,13 @@ def extract_skills(text: str, skill_aliases: dict) -> list:
     text = text.lower()
     detected = []
     for main_skill, aliases in skill_aliases.items():
-        if any(alias in text for alias in aliases):
-            detected.append(main_skill)
+        for alias in aliases:
+            # Word-boundary match so short aliases like "ai", "ml", "dl", "tf"
+            # don't false-positive inside unrelated words (e.g. "training", "handle").
+            pattern = r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])"
+            if re.search(pattern, text):
+                detected.append(main_skill)
+                break
     return detected
 
 
@@ -256,7 +264,8 @@ async def analyze_resume(
     ),
 ):
     if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
+        raise HTTPException(
+            status_code=400, detail="Please upload a PDF file.")
 
     file_bytes = await file.read()
     if not file_bytes:
@@ -266,19 +275,23 @@ async def analyze_resume(
     try:
         raw_text = extract_text_from_pdf(file_bytes)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Could not read PDF: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Could not read PDF: {exc}")
 
     clean_resume = clean_text(raw_text)
     if not clean_resume:
-        raise HTTPException(status_code=422, detail="No extractable text found in PDF.")
+        raise HTTPException(
+            status_code=422, detail="No extractable text found in PDF.")
 
     # 3-4. Resume embedding + semantic similarity to each role
     resume_embedding = models.embedder.encode(clean_resume)
 
     role_results = []
     for role in models.role_embeddings:
-        similarity = cosine_similarity([resume_embedding], [role["embedding"]])[0][0]
-        role_results.append({"role": role["role"], "score": round(similarity * 100, 2)})
+        similarity = cosine_similarity(
+            [resume_embedding], [role["embedding"]])[0][0]
+        role_results.append(
+            {"role": role["role"], "score": round(similarity * 100, 2)})
 
     role_results.sort(key=lambda x: x["score"], reverse=True)
 
