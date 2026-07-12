@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>ATS API Tester</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #161922;
+      --panel-border: #262b38;
+      --text: #e8eaf0;
+      --muted: #8b90a0;
+      --accent: #5b8cff;
+      --good: #3ecf8e;
+      --bad: #ff6b6b;
+      --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 40px 20px 80px;
+    }
+
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 4px;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0 0 28px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .server-url {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: #0c0e13;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--muted);
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .server-url:focus {
+      outline: 1px solid var(--accent);
+      color: var(--text);
+    }
+
+    .dropzone {
+      border: 1.5px dashed var(--panel-border);
+      border-radius: 10px;
+      padding: 28px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+      margin-top: 16px;
+    }
+
+    .dropzone:hover,
+    .dropzone.drag {
+      border-color: var(--accent);
+      background: #131722;
+    }
+
+    .dropzone input {
+      display: none;
+    }
+
+    .dropzone .name {
+      color: var(--text);
+      font-weight: 600;
+      margin-top: 6px;
+    }
+
+    .dropzone .hint {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    label.check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--muted);
+      margin-top: 16px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 18px;
+      width: 100%;
+      transition: opacity .15s ease;
+    }
+
+    button.primary:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    button.primary:hover:not(:disabled) {
+      opacity: .9;
+    }
+
+    .status {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      display: none;
+    }
+
+    .status.show {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--panel-border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .error {
+      background: #2a1518;
+      border: 1px solid #4a2328;
+      color: #ff9d9d;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+      margin-top: 14px;
+      font-family: var(--mono);
+      white-space: pre-wrap;
+      display: none;
+    }
+
+    .error.show {
+      display: block;
+    }
+
+    /* results */
+    #results {
+      display: none;
+    }
+
+    #results.show {
+      display: block;
+    }
+
+    .role-card {
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+    }
+
+    .role-card.top {
+      border-color: var(--accent);
+      background: #131a2b;
+    }
+
+    .role-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 10px;
+    }
+
+    .role-name {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .role-score {
+      font-family: var(--mono);
+      font-size: 15px;
+      color: var(--accent);
+    }
+
+    .bar-track {
+      height: 6px;
+      background: #0c0e13;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+    }
+
+    .skills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .pill {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-family: var(--mono);
+    }
+
+    .pill.matched {
+      background: #10301f;
+      color: var(--good);
+    }
+
+    .pill.missing {
+      background: #331414;
+      color: var(--bad);
+    }
+
+    .detected {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+
+    .detected span {
+      color: var(--text);
+    }
+
+    .feedback {
+      white-space: pre-wrap;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    h2.section {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      margin: 0 0 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>ATS API Tester</h1>
+    <p class="sub">Upload a resume PDF and hit your local FastAPI server directly from the browser.</p>
+
+    <div class="panel">
+      <div class="row">
+        <input class="server-url" id="serverUrl" value="http://localhost:8000/analyze" spellcheck="false">
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept="application/pdf">
+        <div class="hint">Click to choose a PDF, or drag one here</div>
+        <div class="name" id="fileName"></div>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" id="feedbackToggle">
+        Include LLM feedback (slower — loads Phi-3.5-mini on first run)
+      </label>
+
+      <button class="primary" id="submitBtn" disabled>Analyze resume</button>
+
+      <div class="status" id="status">
+        <div class="spinner"></div>
+        <span id="statusText">Processing…</span>
+      </div>
+
+      <div class="error" id="error"></div>
+    </div>
+
+    <div class="panel" id="results">
+      <h2 class="section">Detected skills</h2>
+      <div class="detected" id="detectedSkills"></div>
+
+      <h2 class="section">Role matches</h2>
+      <div id="roleCards"></div>
+
+      <div id="feedbackSection" style="display:none; margin-top: 20px;">
+        <h2 class="section">LLM feedback</h2>
+        <div class="feedback" id="feedbackText"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    const submitBtn = document.getElementById('submitBtn');
+    const statusEl = document.getElementById('status');
+    const statusText = document.getElementById('statusText');
+    const errorEl = document.getElementById('error');
+    const resultsEl = document.getElementById('results');
+    const feedbackToggle = document.getElementById('feedbackToggle');
+    const serverUrlInput = document.getElementById('serverUrl');
+
+    let selectedFile = null;
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('drag');
+      if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length) setFile(fileInput.files[0]);
+    });
+
+    function setFile(file) {
+      if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+        showError('Please select a PDF file.');
+        return;
+      }
+      selectedFile = file;
+      fileName.textContent = file.name;
+      submitBtn.disabled = false;
+      hideError();
+    }
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.classList.add('show');
+    }
+    function hideError() {
+      errorEl.classList.remove('show');
+      errorEl.textContent = '';
+    }
+
+    submitBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      hideError();
+      resultsEl.classList.remove('show');
+      submitBtn.disabled = true;
+      statusEl.classList.add('show');
+      statusText.textContent = feedbackToggle.checked
+        ? 'Processing… LLM feedback can take a while on first run.'
+        : 'Processing…';
+
+      const baseUrl = serverUrlInput.value.trim();
+      const url = feedbackToggle.checked
+        ? baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'include_feedback=true'
+        : baseUrl;
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      try {
+        const res = await fetch(url, { method: 'POST', body: formData });
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          const detail = data && data.detail ? JSON.stringify(data.detail, null, 2) : `HTTP ${res.status}`;
+          throw new Error(detail);
+        }
+
+        renderResults(data);
+      } catch (err) {
+        showError('Request failed:\n' + err.message +
+          '\n\nCheck that the server is running and reachable at the URL above, and that CORS is enabled.');
+      } finally {
+        statusEl.classList.remove('show');
+        submitBtn.disabled = false;
+      }
+    });
+
+    function renderResults(data) {
+      document.getElementById('detectedSkills').innerHTML =
+        '<span>' + (data.resume_skills_detected || []).join(', ') + '</span>';
+
+      const cardsEl = document.getElementById('roleCards');
+      cardsEl.innerHTML = '';
+      const topRole = data.top_match ? data.top_match.Role : null;
+
+      (data.results || []).forEach(r => {
+        const isTop = r.Role === topRole;
+        const card = document.createElement('div');
+        card.className = 'role-card' + (isTop ? ' top' : '');
+        card.innerHTML = `
+      <div class="role-head">
+        <div class="role-name">${r.Role}${isTop ? ' — top match' : ''}</div>
+        <div class="role-score">${r['ATS Score']}%</div>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${r['ATS Score']}%"></div></div>
+      <div class="skills">
+        ${r['Matched Skills'].map(s => `<span class="pill matched">${s}</span>`).join('')}
+        ${r['Missing Skills'].map(s => `<span class="pill missing">${s}</span>`).join('')}
+      </div>
+    `;
+        cardsEl.appendChild(card);
+      });
+
+      const fbSection = document.getElementById('feedbackSection');
+      if (data.feedback) {
+        fbSection.style.display = 'block';
+        document.getElementById('feedbackText').textContent = data.feedback;
+      } else {
+        fbSection.style.display = 'none';
+      }
+
+      resultsEl.classList.add('show');
+    }
+  </script>
+</body>
+
+</html>
