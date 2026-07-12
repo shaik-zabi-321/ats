@@ -28,11 +28,16 @@ Then POST a PDF to:  http://localhost:8000/analyze
 import re
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 import fitz  # PyMuPDF
 from fastapi import FastAPI, File, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 # ----------------------------------------------------------------------
 # Static data: roles, role skill requirements, skill alias dictionary
@@ -344,3 +349,13 @@ async def analyze_resume(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the tester page so visiting the deployed link shows a real UI,
+    not a bare JSON 404."""
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return index_file.read_text(encoding="utf-8")
+    return "<h1>ATS Resume Analyzer API</h1><p>See /health and /analyze.</p>"
